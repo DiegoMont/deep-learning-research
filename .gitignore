@@ -1,3 +1,9 @@
+# Model training files
 data/
+*.pth
 
+# IDE files
 .env
+
+# Project files
+debug_script.py

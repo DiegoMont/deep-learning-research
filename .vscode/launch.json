@@ -9,7 +9,7 @@
             "type": "debugpy",
             "justMyCode": false,
             "request": "launch",
-            "program": "${workspaceFolder}/feature-extraction/googlenet.py",
+            "program": "${workspaceFolder}/debug_script.py",
             "console": "integratedTerminal"
         }
     ]
