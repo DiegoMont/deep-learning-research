@@ -227,6 +227,7 @@ class UNet(Module):
     def __init__(self, num_classes: int, input_size: int):
         super().__init__()
         upsample_size = input_size // 32
+        self.input_size = input_size
         self.encoder = ResNet34(10)
         self.decoder = ResNet34Decoder(num_classes, upsample_size)
 
@@ -249,15 +250,21 @@ class UNet(Module):
         x = self.decoder.upsample(x) # (512, 16, 16)
         x += block4
         x = self.decoder.layer4(x) # (256, 32, 32)
-        x += block3
-        x = self.decoder.layer3(x) # (128, 64, 64)
-        x += block2
-        x = self.decoder.layer2(x) # (64, 128, 128)
-        x += block1
-        x = self.decoder.layer1(x) # (64, 128, 128)
-        x += stage1
-        x = self.decoder.classifier(x) # (N, H, W)
-        return x
+        x1 = x + block3
+        x1 = self.decoder.layer3(x1) # (128, 64, 64)
+        x2 = x1 + block2
+        x2 = self.decoder.layer2(x2) # (64, 128, 128)
+        x3 = x2 + block1
+        x3 = self.decoder.layer1(x3) # (64, 128, 128)
+        x4 = x3 + stage1
+        x4 = self.decoder.classifier(x4) # (N, H, W)
+        return x4
+
+
+def load_unet(num_classes: int, input_size: int) -> UNet:
+    model = UNet(num_classes, input_size)
+    opt_model = torch.compile(model, dynamic=False, mode="reduce-overhead")
+    return opt_model # type: ignore
 
 
 if __name__ == "__main__":
