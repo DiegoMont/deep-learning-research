@@ -1,6 +1,7 @@
 import torch
-from torch.nn import AdaptiveAvgPool2d, ConvTranspose2d, Linear, Module, ReLU, Sequential, Sigmoid
+from torch.nn import AdaptiveAvgPool2d, AdaptiveMaxPool2d, ConvTranspose2d, Linear, Module, ReLU, Sequential, Sigmoid
 from torchvision.models import resnet
+from torchvision.ops import MLP
 
 
 class SEModule(Module):
@@ -21,6 +22,23 @@ class SEModule(Module):
         out = self.excitation(out)  # (B, C)
         b, c, h, w = x.shape
         return x * out.view(b, c, 1, 1)  # (B, C, H, W)
+
+
+class ChannelAttentionModule(Module):
+    def __init__(self, channels: int, reduction_ratio: int):
+        super().__init__()
+        self.max_pool = AdaptiveMaxPool2d(1)
+        c_over_q = channels // reduction_ratio
+        self.mlp = MLP(channels, hidden_channels=[c_over_q, channels])
+        self.encoder_layer = None
+
+    def forward(self, x):
+        x = self.max_pool(x)  # (B, C, 1, 1)
+        x = torch.squeeze(x)  # (B, C)
+        x = self.mlp(x) # (B, C)
+        out = Sigmoid()(x)
+        b, c = x.shape
+        return out.view(b, c, 1, 1)
 
 
 class TinyCrackNet(Module):
@@ -45,7 +63,10 @@ class TinyCrackNet(Module):
         self.deconv1 = ConvTranspose2d(1024, 512, kernel_size=2, stride=2)
         self.decoder2 = self.__make_se_layer(512, resnet.conv3x3(1024, 512))
         self.deconv2 = ConvTranspose2d(512, 256, kernel_size=2, stride=2)
-        self.decoder3 = self.__make_se_layer(512, resnet.conv3x3(512, 1024))
+        self.decoder3 = self.__make_se_layer(1024, resnet.conv3x3(512, 1024))
+
+        # attention fusion architecture
+        self.channel_attention = ChannelAttentionModule(1024, 16)
 
     def forward(self, x):
         x = self.se_conv1(x)  # (64, H/4, W/4)
@@ -63,7 +84,10 @@ class TinyCrackNet(Module):
         x2 = self.decoder2(x2)  # (512, H/8, W/8)
         x3 = self.deconv2(x2)  # (256, H/4, W/4)
         x3 = torch.cat([concat1, x3], dim=1)  # (512, H/4, W/4)
-        x3 = self.decoder3(x3)
+        attention0 = x0  # (1024, H/32, W/32)
+        attention1 = self.decoder3(x3)  # (1024, H/4, W/4)
+        attention3 = self.channel_attention(attention0)  # (1024, 1, 1)
+        attention3 = attention3 * attention0  # (1024, H/32, W/32)
         return x
 
     def __make_se_layer(self, se_channels: int, residual_block: Module) -> Sequential:
