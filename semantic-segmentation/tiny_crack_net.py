@@ -1,5 +1,5 @@
 import torch
-from torch.nn import AdaptiveAvgPool2d, AdaptiveMaxPool2d, ConvTranspose2d, Linear, Module, ReLU, Sequential, Sigmoid
+from torch.nn import AdaptiveAvgPool2d, AdaptiveMaxPool2d, BatchNorm2d, ConvTranspose2d, Conv2d, Linear, Module, ReLU, Sequential, Sigmoid
 from torchvision.models import resnet
 from torchvision.ops import MLP
 
@@ -41,6 +41,21 @@ class ChannelAttentionModule(Module):
         return out.view(b, c, 1, 1)
 
 
+class SpatialAttentionModule(Module):
+    def __init__(self, channels: int):
+        super().__init__()
+        self.conv = Conv2d(2, 1, 1, bias=False)
+        self.relu = ReLU()
+
+    def forward(self, x):
+        max_pool = torch.max(x, dim=1, keepdim=True).values
+        avg_pool = torch.mean(x, dim=1, keepdim=True)
+        x = torch.cat([max_pool, avg_pool], dim=1)
+        x = self.conv(x)
+        out = self.relu(x)
+        return out
+
+
 class TinyCrackNet(Module):
     def __init__(self):
         super().__init__()
@@ -67,6 +82,7 @@ class TinyCrackNet(Module):
 
         # attention fusion architecture
         self.channel_attention = ChannelAttentionModule(1024, 16)
+        self.spatial_attention = SpatialAttentionModule(1024)
 
     def forward(self, x):
         x = self.se_conv1(x)  # (64, H/4, W/4)
@@ -84,10 +100,13 @@ class TinyCrackNet(Module):
         x2 = self.decoder2(x2)  # (512, H/8, W/8)
         x3 = self.deconv2(x2)  # (256, H/4, W/4)
         x3 = torch.cat([concat1, x3], dim=1)  # (512, H/4, W/4)
+
         attention0 = x0  # (1024, H/32, W/32)
         attention1 = self.decoder3(x3)  # (1024, H/4, W/4)
-        attention3 = self.channel_attention(attention0)  # (1024, 1, 1)
-        attention3 = attention3 * attention0  # (1024, H/32, W/32)
+        ch_attention = self.channel_attention(attention0)  # (1024, 1, 1)
+        ch_attention = ch_attention * attention0  # (1024, H/32, W/32)
+        space_attention = self.spatial_attention(ch_attention) # (1, H/32, W/32)
+        space_attention = space_attention * attention0  # (1024, H/32, W/32)
         return x
 
     def __make_se_layer(self, se_channels: int, residual_block: Module) -> Sequential:
@@ -98,7 +117,8 @@ class TinyCrackNet(Module):
 
 
 if __name__ == "__main__":
-    test_batch = torch.rand(32, 3, 480, 640)  # (B, C, H, W)
-    tcn = TinyCrackNet()
+    device = torch.device("cpu")
+    test_batch = torch.rand(32, 3, 480, 640).to(device)  # (B, C, H, W)
+    tcn = TinyCrackNet().to(device)
     output = tcn(test_batch)
     pass
