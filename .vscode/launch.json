@@ -5,7 +5,15 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Current File",
+            "name": "Py: Current File",
+            "type": "debugpy",
+            "justMyCode": false,
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Py: debug_script",
             "type": "debugpy",
             "justMyCode": false,
             "request": "launch",
