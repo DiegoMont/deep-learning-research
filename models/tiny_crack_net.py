@@ -1,28 +1,11 @@
 import torch
-from torch.nn import AdaptiveAvgPool2d, AdaptiveMaxPool2d, ConvTranspose2d, Conv2d, Linear, Module, ReLU, Sequential, Sigmoid, Softmax2d
+from torch.nn import AdaptiveAvgPool2d, AdaptiveMaxPool2d, ConvTranspose2d, Conv2d, Module, ReLU, Sequential, Sigmoid, Softmax2d
 from torchvision.models import resnet
+from torchvision.models.resnet import ResNet50_Weights
 from torchvision.ops import MLP
 from torchvision.transforms import Resize
 
-
-class SEModule(Module):
-    def __init__(self, channels: int, reduction=16):
-        super().__init__()
-        c_over_r = channels // reduction
-        self.global_pooling = AdaptiveAvgPool2d(1)
-        self.excitation = Sequential(
-            Linear(channels, c_over_r, bias=False),
-            ReLU(),
-            Linear(c_over_r, channels, bias=False),
-            Sigmoid()
-        )
-
-    def forward(self, x):
-        out = self.global_pooling(x)  # (B, C, 1, 1)
-        out = torch.squeeze(out, (2, 3))  # (B, C)
-        out = self.excitation(out)  # (B, C)
-        b, c, h, w = x.shape
-        return x * out.view(b, c, 1, 1)  # (B, C, H, W)
+from models.senet import SEResNet
 
 
 class ChannelAttentionModule(Module):
@@ -81,25 +64,17 @@ class TinyCrackNet(Module):
     def __init__(self, num_classes: int):
         super().__init__()
         # bottom-up encoder
-        backbone = resnet.resnet50()
-        self.se_conv1 = Sequential(
-            backbone.conv1,
-            backbone.bn1,
-            backbone.relu,
-            backbone.maxpool)
-        self.se_conv2_x = self.__make_se_layer(256, backbone.layer1)
-        self.se_conv3_x = self.__make_se_layer(512, backbone.layer2)
-        self.se_conv4_x = self.__make_se_layer(1024, backbone.layer3)
-        self.se_conv5_x = self.__make_se_layer(2048, backbone.layer4)
+        backbone = resnet.resnet50(weights=ResNet50_Weights.DEFAULT)
+        self.encoder = SEResNet(1, backbone)
 
         # up-sampling decoder
-        self.decoder0 = self.__make_se_layer(1024, resnet.conv3x3(2048, 1024))
+        self.decoder0 = SEResNet.make_se_layer(1024, resnet.conv3x3(2048, 1024))
         self.deconv0 = ConvTranspose2d(1024, 1024, kernel_size=2, stride=2)
-        self.decoder1 = self.__make_se_layer(1024, resnet.conv3x3(2048, 1024))
+        self.decoder1 = SEResNet.make_se_layer(1024, resnet.conv3x3(2048, 1024))
         self.deconv1 = ConvTranspose2d(1024, 512, kernel_size=2, stride=2)
-        self.decoder2 = self.__make_se_layer(512, resnet.conv3x3(1024, 512))
+        self.decoder2 = SEResNet.make_se_layer(512, resnet.conv3x3(1024, 512))
         self.deconv2 = ConvTranspose2d(512, 256, kernel_size=2, stride=2)
-        self.decoder3 = self.__make_se_layer(1024, resnet.conv3x3(512, 1024))
+        self.decoder3 = SEResNet.make_se_layer(1024, resnet.conv3x3(512, 1024))
         self.decoder4 = Sequential(
             Conv2d(1024, 1024, 3, padding=1, bias=False),
             Softmax2d())
@@ -115,11 +90,11 @@ class TinyCrackNet(Module):
 
     def forward(self, x):
         _, _, H, W = x.shape
-        x = self.se_conv1(x)  # (64, H/4, W/4)
-        concat1 = self.se_conv2_x(x)  # (256, H/4, W/4)
-        concat2 = self.se_conv3_x(concat1)  # (512, H/8, W/8)
-        concat3 = self.se_conv4_x(concat2)  # (1024, H/16, W/16)
-        x = self.se_conv5_x(concat3)  # (2048, H/32, W/32)
+        x = self.encoder.se_conv1(x)  # (64, H/4, W/4)
+        concat1 = self.encoder.se_conv2_x(x)  # (256, H/4, W/4)
+        concat2 = self.encoder.se_conv3_x(concat1)  # (512, H/8, W/8)
+        concat3 = self.encoder.se_conv4_x(concat2)  # (1024, H/16, W/16)
+        x = self.encoder.se_conv5_x(concat3)  # (2048, H/32, W/32)
 
         x = self.decoder0(x)  # (1024, H/32, W/32)
         x = self.deconv0(x)  # (1024, H/16, W/16)
@@ -134,19 +109,13 @@ class TinyCrackNet(Module):
         soft_attention = x
         x = self.decoder4(x)  # (1024, H/4, W/4)
 
-        soft_attention = self.dual_attention(soft_attention)  # (1024, H/4, W/4)
+        # soft_attention = self.dual_attention(soft_attention)  # (1024, H/4, W/4)
 
-        x = x + soft_attention  # (1024, H/4, W/4)
+        # x = x + soft_attention  # (1024, H/4, W/4)
         x = self.segmentation_map(x)  # (256, H/4, W/4)
         x = Resize(size=(H, W), antialias=False)(x) # (256, H, W)
         x = self.classifier(x)  # (N, H, W)
         return x
-
-    def __make_se_layer(self, se_channels: int, residual_block: Module) -> Sequential:
-        se_layer = Sequential(
-            residual_block,
-            SEModule(se_channels))
-        return se_layer
 
 
 if __name__ == "__main__":
