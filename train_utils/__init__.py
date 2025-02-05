@@ -1,12 +1,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torch.utils.data import Dataset
 import torchvision.utils as vision_utils
 
-from datasets import WaterSegmentationDataset
 
-
-def show_label(dataset: WaterSegmentationDataset, index: int):
+def show_label(dataset: Dataset, index: int):
     image_arr, mask_arr = dataset[index]
     image = (image_arr * 255).type(torch.uint8)
     mask = mask_arr > 0
@@ -44,3 +43,4 @@ def print_loss_history(train_loss: list[float], val_loss: list[float]):
     plt.legend()
     plt.grid()
     plt.show()
+
