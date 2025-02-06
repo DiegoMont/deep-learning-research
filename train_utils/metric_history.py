@@ -27,7 +27,7 @@ class MetricHistory:
         plt.figure(figsize=(10, 8))
         plt.plot(epochs, self.train, f"{self.__color}o", label=f"Training {self.__metric}")
         plt.plot(epochs, self.validation, f"{self.__color}--", label=f"Validation {self.__metric}")
-        plt.title("Training {metric}")
+        plt.title(f"Training {self.__metric}")
         plt.legend()
         plt.grid()
         plt.show()
