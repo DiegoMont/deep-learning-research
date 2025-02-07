@@ -1,18 +1,49 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torch.nn import Module
+from torch import Tensor
+from torch.nn import functional, Module
 from torch.utils.data import Dataset, DataLoader
 import torchvision.utils as vision_utils
 
+from datasets.segmentation import BaseSegmentationDataset
+from . import base
 from .metric_history import MetricHistory
 
 
+def compare_prediction(model, dataset: BaseSegmentationDataset, index: int, device):
+    model.eval()
+    with torch.no_grad():
+        image, label = dataset[index][0].to(device), dataset[index][1].to(device)
+        outputs = model(image.unsqueeze(0))
+    prediction = _get_predictions(outputs)
+    fig, axs = plt.subplots(1, 3, layout='tight')
+    axs[0].imshow(image.permute((1, 2, 0)).cpu())
+    axs[1].imshow(label.squeeze().cpu() * 127)
+    axs[2].imshow(prediction.squeeze().cpu() * 127)
+    axs[0].set_axis_off()
+    axs[1].set_axis_off()
+    axs[2].set_axis_off()
+    fig.show()
+
+
 def pixel_accuracy(targets, outputs):
-    _, predictions = torch.max(outputs.data, 1)
+    predictions = _get_predictions(outputs)
     correct = predictions.eq(targets).sum().item()
     accuracy = correct / torch.numel(targets)
     return accuracy
+
+
+def print_model_performace(model: Module, dataset: BaseSegmentationDataset, device):
+    accuracy = 0
+    model.eval()
+    with torch.no_grad():
+        for data in dataset:
+            image, label = data[0].unsqueeze(0).to(device), data[1]
+            prediction = model(image).cpu()
+            accuracy += pixel_accuracy(label, prediction)
+    accuracy /= len(dataset)
+    print(f"Accuracy: {accuracy:.5f}")
 
 
 def show_label(dataset: Dataset, index: int):
@@ -37,39 +68,14 @@ def train_model(
         checkpoint_name: str,
         scheduler = None
     ) -> tuple[MetricHistory, MetricHistory]:
-    STARTING_EPOCH = epochs // 5
-    loss_history = MetricHistory("loss", "b")
-    accuracy_history = MetricHistory("accuracy", "r")
-    last_saved_epoch = -1
-    for epoch in range(1, epochs + 1):
-        segmenter.train()
-        for data in train_loader:
-            images, labels = data[0].to(device), data[1].to(device)
-            optimizer.zero_grad()
-            outputs = segmenter(images)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            loss_history.register_epoch_value(loss.item(), 0)
-            accuracy_history.register_epoch_value(pixel_accuracy(labels, outputs), 0)
-        segmenter.eval()
-        with torch.no_grad():
-            for data in validation_loader:
-                images, labels = data[0].to(device), data[1].to(device)
-                outputs = segmenter(images)
-                loss = criterion(outputs, labels)
-                loss_history.register_epoch_value(0, loss.item())
-                accuracy_history.register_epoch_value(0, pixel_accuracy(labels, outputs))
-        loss_history.compute(len(train_loader), len(validation_loader))
-        accuracy_history.compute(len(train_loader), len(validation_loader))
-        if scheduler is not None:
-            scheduler.step(loss_history.validation[-1])
-        if epoch >= STARTING_EPOCH and epoch - 5 > last_saved_epoch:
-            previous_best_acc = max(accuracy_history.validation[:-2])
-            val_acc = accuracy_history.validation[-1]
-            if val_acc > previous_best_acc:
-                acc = str(round(val_acc, 3)).replace(".", "")
-                path = f"checkpoints/{checkpoint_name}_epoch{epoch}_{acc}.pth"
-                torch.save(segmenter.state_dict(), path)
-                last_saved_epoch = epoch
-    return loss_history, accuracy_history
+    return base.train_model(segmenter, train_loader, validation_loader, epochs, optimizer,
+                            criterion, device, pixel_accuracy, checkpoint_name, scheduler)
+
+
+def _get_predictions(outputs: Tensor) -> Tensor:
+    _, n, _, _ = outputs.shape
+    if n > 1:
+        predictions = torch.argmax(outputs, dim=1, keepdim=True)
+    else:
+        predictions = (functional.sigmoid(outputs) > 0.5).int()
+    return predictions

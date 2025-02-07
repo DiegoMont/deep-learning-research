@@ -49,8 +49,12 @@ def train_model(
             previous_best_acc = max(accuracy_history.validation[:-2])
             val_acc = accuracy_history.validation[-1]
             if val_acc > previous_best_acc:
-                acc = str(round(val_acc, 3)).replace(".", "")
-                path = f"checkpoints/{checkpoint_name}_epoch{epoch}_{acc}.pth"
-                torch.save(model.state_dict(), path)
+                _save_checkpoint(model, checkpoint_name, val_acc, epoch)
                 last_saved_epoch = epoch
     return loss_history, accuracy_history
+
+
+def _save_checkpoint(model, checkpoint_name, acc, epoch):
+    acc_str = str(round(acc, 3)).replace(".", "")
+    path = f"checkpoints/{checkpoint_name}_{acc_str}_epoch{epoch}.pth"
+    torch.save(model.state_dict(), path)
