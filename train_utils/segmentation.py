@@ -53,8 +53,10 @@ def show_label(dataset: Dataset, index: int):
     colors = ["#460046", "#D2691E"]
     img = vision_utils.draw_segmentation_masks(image, mask, alpha=0.5, colors=colors) # type: ignore
     npimg = np.array(img)
-    plt.imshow(np.transpose(npimg, (1, 2, 0)))
-    plt.show()
+    fig, ax = plt.subplots(1, 1)
+    ax.imshow(np.transpose(npimg, (1, 2, 0)))
+    ax.set_axis_off()
+    fig.show()
 
 
 def train_model(

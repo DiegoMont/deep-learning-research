@@ -1,9 +1,8 @@
 import torch
-from torch.nn import AdaptiveAvgPool2d, AdaptiveMaxPool2d, ConvTranspose2d, Conv2d, Module, ReLU, Sequential, Sigmoid, Softmax2d
+from torch.nn import AdaptiveAvgPool2d, AdaptiveMaxPool2d, ConvTranspose2d, Conv2d, Module, ReLU, Sequential, Sigmoid, Upsample
 from torchvision.models import resnet
 from torchvision.models.resnet import ResNet50_Weights
 from torchvision.ops import MLP
-from torchvision.transforms import Resize
 
 from models.senet import SEResNet
 
@@ -18,15 +17,15 @@ class ChannelAttentionModule(Module):
         self.encoder_layer = None
 
     def forward(self, x):
+        b, c, _, _ = x.shape
         out = self.max_pool(x)  # (B, C, 1, 1)
         out = torch.squeeze(out)  # (B, C)
         out = self.mlp(out)  # (B, C)
         x = self.avg_pool(x)  # (B, C, 1, 1)
         x = torch.squeeze(x)  # (B, C)
         x = self.mlp(x)  # (B, C)
-        out = out + x  # (B, C, 1, 1)
+        out = out + x  # (B, C)
         out = Sigmoid()(out)
-        b, c = x.shape
         return out.view(b, c, 1, 1)
 
 
@@ -77,7 +76,8 @@ class TinyCrackNet(Module):
         self.decoder3 = SEResNet.make_se_layer(1024, resnet.conv3x3(512, 1024))
         self.decoder4 = Sequential(
             Conv2d(1024, 1024, 3, padding=1, bias=False),
-            Softmax2d())
+            #Softmax2d()
+        )
 
         # attention fusion architecture
         self.dual_attention = DualAttentionModule(1024, 16)
@@ -85,8 +85,9 @@ class TinyCrackNet(Module):
         # head
         self.segmentation_map = Sequential(
             Conv2d(1024, 512, 3, padding=1, bias=False),
-            Conv2d(512, 256, 3, padding=1, bias=False))
-        self.classifier = Conv2d(256, num_classes, 1, bias=False)
+            Conv2d(512, 256, 3, padding=1, bias=False),
+            Upsample(scale_factor=4))
+        self.classifier: Module = Conv2d(256, num_classes, 1, bias=False)
 
     def forward(self, x):
         _, _, H, W = x.shape
@@ -109,12 +110,12 @@ class TinyCrackNet(Module):
         soft_attention = x
         x = self.decoder4(x)  # (1024, H/4, W/4)
 
-        # soft_attention = self.dual_attention(soft_attention)  # (1024, H/4, W/4)
+        soft_attention = self.dual_attention(soft_attention)  # (1024, H/4, W/4)
 
-        # x = x + soft_attention  # (1024, H/4, W/4)
-        x = self.segmentation_map(x)  # (256, H/4, W/4)
-        x = Resize(size=(H, W), antialias=False)(x) # (256, H, W)
+        x = x + soft_attention  # (1024, H/4, W/4)
+        x = self.segmentation_map(x)  # (256, H, W)
         x = self.classifier(x)  # (N, H, W)
+
         return x
 
 
