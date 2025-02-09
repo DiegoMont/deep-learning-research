@@ -22,7 +22,7 @@ def train_model(
     chpt_distance = max(epochs // 10, 3)
     loss_history = MetricHistory("loss", "b")
     accuracy_history = MetricHistory("accuracy", "r")
-    last_saved_epoch = STARTING_EPOCH - 1
+    last_saved_epoch = STARTING_EPOCH - chpt_distance - 1
     for epoch in range(1, epochs + 1):
         model.train()
         for data in tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}"):
@@ -46,7 +46,7 @@ def train_model(
         accuracy_history.compute(len(train_loader), len(validation_loader))
         if scheduler is not None:
             scheduler.step(loss_history.validation[-1])
-        if epoch >= STARTING_EPOCH and epoch - chpt_distance > last_saved_epoch:
+        if epoch - chpt_distance > last_saved_epoch:
             previous_best_acc = max(accuracy_history.validation[:-2])
             val_acc = accuracy_history.validation[-1]
             if val_acc > previous_best_acc:

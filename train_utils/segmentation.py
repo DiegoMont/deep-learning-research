@@ -2,13 +2,39 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import Tensor
-from torch.nn import functional, Module
+from torch.nn import functional, Module, BCEWithLogitsLoss
 from torch.utils.data import Dataset, DataLoader
 import torchvision.utils as vision_utils
 
 from datasets.segmentation import BaseSegmentationDataset
 from . import base
 from .metric_history import MetricHistory
+
+
+class DiceLossWithLogits(Module):
+    def __init__(self, smooth: float = 1e-6):
+        super().__init__()
+        self.smooth = smooth
+
+    def forward(self, output: Tensor, target: Tensor):
+        prediction = functional.sigmoid(output)
+        intersection = torch.sum(target * prediction)
+        union = prediction.sum() + target.sum()
+        dice_coefficient = (2 * intersection + self.smooth) / (union + self.smooth)
+        return 1 - dice_coefficient
+    
+
+class JointDiceBCEWithLogitsLoss(Module):
+    def __init__(self, alpha: float, smooth: float = 1e-6):
+        super().__init__()
+        self.alpha = alpha
+        self.dice_loss = DiceLossWithLogits(smooth)
+        self.bce_loss = BCEWithLogitsLoss()
+
+    def forward(self, output: Tensor, target: Tensor):
+        dice = self.dice_loss(output, target)
+        bce = self.bce_loss(output, target)
+        return self.alpha * dice + (1 - self.alpha) * bce
 
 
 def compare_prediction(model, dataset: BaseSegmentationDataset, index: int, device):
