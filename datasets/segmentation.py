@@ -52,7 +52,7 @@ class WaterSegmentationDataset(BaseSegmentationDataset):
             image = transformed["image"]
             mask = transformed["mask"]
         img = torch.from_numpy(np.transpose(image, (2, 0, 1)))
-        target = torch.from_numpy(np.transpose(mask, (2, 0, 1))).to(dtype=torch.float32)
+        target = torch.from_numpy(np.transpose(mask, (2, 0, 1)))
         return img, target
 
     def __load_images_to_memory(self) -> list[np.ndarray]:
@@ -81,7 +81,7 @@ class WaterSegmentationDataset(BaseSegmentationDataset):
     def __encode_water(self, mask) -> Tensor:
         greyscale_mask = mask.sum(axis=0) / 3
         hot_encoded_mask = greyscale_mask > 200
-        encoded_water_mask = hot_encoded_mask.long()
+        encoded_water_mask = hot_encoded_mask.to(dtype=torch.float32)
         return encoded_water_mask
 
 
@@ -96,10 +96,10 @@ class CrackSeg(BaseSegmentationDataset):
         image = F.pil_to_tensor(rgb_img).float() / 255
         rgb_mask = self._open_as_rgb_image(mask_path)
         mask = F.pil_to_tensor(rgb_mask)
-        mask = self.__encode_cracks(mask)
+        mask = self.__encode_cracks(mask).unsqueeze(0)
         return image, mask
 
     def __encode_cracks(self, mask) -> Tensor:
         greyscale_mask = mask.sum(axis=0) / 3
         hot_encoded_mask = greyscale_mask > 200
-        return hot_encoded_mask.long()
+        return hot_encoded_mask.to(dtype=torch.float32)
