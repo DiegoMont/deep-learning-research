@@ -87,7 +87,7 @@ class TinyCrackNet(Module):
             Conv2d(1024, 512, 3, padding=1, bias=False),
             Conv2d(512, 256, 3, padding=1, bias=False),
             Upsample(scale_factor=4))
-        self.classifier: Module = Conv2d(256, num_classes, 1, bias=False)
+        self.classifier: Module = Conv2d(256, num_classes, 5, padding=2, bias=False)
 
     def forward(self, x):
         _, _, H, W = x.shape
