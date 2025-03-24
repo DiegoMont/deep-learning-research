@@ -1,5 +1,5 @@
 import torch
-from torch.nn import AdaptiveAvgPool2d, AdaptiveMaxPool2d, ConvTranspose2d, Conv2d, Module, ReLU, Sequential, Sigmoid, Upsample
+from torch.nn import AdaptiveAvgPool2d, AdaptiveMaxPool2d, BatchNorm2d, ConvTranspose2d, Conv2d, Module, ReLU, Sequential, Sigmoid, Upsample
 from torchvision.models import resnet
 from torchvision.models.resnet import ResNet50_Weights
 from torchvision.ops import MLP
@@ -68,15 +68,15 @@ class TinyCrackNet(Module):
 
         # up-sampling decoder
         self.decoder0 = SEResNet.make_se_layer(1024, resnet.conv3x3(2048, 1024))
-        self.deconv0 = ConvTranspose2d(1024, 1024, kernel_size=2, stride=2)
+        self.deconv0 = self._make_decoder_block(1024, 1024)
         self.decoder1 = SEResNet.make_se_layer(1024, resnet.conv3x3(2048, 1024))
-        self.deconv1 = ConvTranspose2d(1024, 512, kernel_size=2, stride=2)
+        self.deconv1 = self._make_decoder_block(1024, 512)
         self.decoder2 = SEResNet.make_se_layer(512, resnet.conv3x3(1024, 512))
-        self.deconv2 = ConvTranspose2d(512, 256, kernel_size=2, stride=2)
+        self.deconv2 = self._make_decoder_block(512, 256)
         self.decoder3 = SEResNet.make_se_layer(1024, resnet.conv3x3(512, 1024))
         self.decoder4 = Sequential(
             Conv2d(1024, 1024, 3, padding=1, bias=False),
-            #Softmax2d()
+            BatchNorm2d(1024)
         )
 
         # attention fusion architecture
@@ -85,12 +85,13 @@ class TinyCrackNet(Module):
         # head
         self.segmentation_map = Sequential(
             Conv2d(1024, 512, 3, padding=1, bias=False),
+            BatchNorm2d(512),
             Conv2d(512, 256, 3, padding=1, bias=False),
+            BatchNorm2d(256),
             Upsample(scale_factor=4))
-        self.classifier: Module = Conv2d(256, num_classes, 5, padding=2, bias=False)
+        self.classifier: Module = Conv2d(256, num_classes, 7, padding=3, bias=False)
 
     def forward(self, x):
-        _, _, H, W = x.shape
         x = self.encoder.se_conv1(x)  # (64, H/4, W/4)
         concat1 = self.encoder.se_conv2_x(x)  # (256, H/4, W/4)
         concat2 = self.encoder.se_conv3_x(concat1)  # (512, H/8, W/8)
@@ -117,6 +118,12 @@ class TinyCrackNet(Module):
         x = self.classifier(x)  # (N, H, W)
 
         return x
+
+    def _make_decoder_block(self, in_channels: int, out_channels: int):
+        return Sequential(
+            ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),
+            BatchNorm2d(out_channels)
+        )
 
 
 if __name__ == "__main__":
