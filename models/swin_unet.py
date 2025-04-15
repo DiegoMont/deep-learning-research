@@ -1,5 +1,5 @@
 import torch
-from torch.nn import Conv2d, LayerNorm, Linear, Module, Sequential
+from torch.nn import Conv2d, LayerNorm, Linear, Module, ModuleList, Sequential
 from torchvision import models
 from torchvision.models.swin_transformer import SwinTransformerBlockV2, Swin_V2_T_Weights
 
@@ -46,8 +46,8 @@ class SwinUnet(Module):
         self.bottleneck = Sequential(encoder.features[6:])
 
         # Decoder
-        self.decoder_expands = []
-        self.decoder_blocks = []
+        self.decoder_expands = ModuleList()
+        self.decoder_blocks = ModuleList()
         depths_decoder = [6, 2, 2]
         dim = C*8
         num_heads = 12
@@ -89,9 +89,10 @@ class SwinUnet(Module):
 
 
 if __name__ == "__main__":
+    device = torch.device("cuda")
     WINDOW_SIZE = 224
-    swin_unet = SwinUnet(1)
-    image = torch.rand(4, 3, WINDOW_SIZE, WINDOW_SIZE)
+    swin_unet = SwinUnet(1).to(device)
+    image = torch.rand(4, 3, WINDOW_SIZE, WINDOW_SIZE).to(device)
     swin_unet.eval()
     with torch.no_grad():
         predictions = swin_unet(image)
