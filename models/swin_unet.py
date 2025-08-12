@@ -1,5 +1,6 @@
+from einops import rearrange
 import torch
-from torch.nn import Conv2d, LayerNorm, Linear, Module, ModuleList, Sequential
+from torch.nn import Conv2d, init, LayerNorm, Linear, Module, ModuleList, Sequential
 from torchvision import models
 from torchvision.models.swin_transformer import SwinTransformerBlockV2, Swin_V2_T_Weights
 
@@ -7,30 +8,30 @@ from torchvision.models.swin_transformer import SwinTransformerBlockV2, Swin_V2_
 class PatchExpanding(Module):
     def __init__(self, dim, dim_scale=2, norm_layer=LayerNorm):
         super().__init__()
-        self.expand = Linear(dim, 2 * dim, bias=False)
-        self.norm = norm_layer(dim // dim_scale)
+        self.norm = norm_layer(dim)
+        self.expand = Linear(dim, dim_scale * dim, bias=False)
 
     def forward(self, x):
-        B, H, W, C = x.shape
+        x = self.norm(x)  # (H, W, C)
         x = self.expand(x)  # (H, W, 2C)
-        x = x.view(B, 2*H, 2*W, C//2)  # (2H, 2W, C/2)
-        x = self.norm(x)  # (2H, 2W, C/2)
+        C = x.shape[3]
+        x = rearrange(x, 'b h w (p1 p2 c) -> b (h p1) (w p2) c', p1=2, p2=2, c=C // 4)
         return x
 
 
 class FinalPatchExpanding(Module):
     def __init__(self, dim, norm_layer=LayerNorm):
         super().__init__()
-        self.expand = Linear(dim, 16 * dim, bias=False)
         self.norm = norm_layer(dim)
+        self.expand = Linear(dim, 16 * dim, bias=False)
 
     def forward(self, x):
-        B, H, W, C = x.shape
+        x = self.norm(x)  # (H, W, C)
         x = self.expand(x)  # (H, W, 16C)
-        x = x.view(B, 4*H, 4*W, C)  # (4H, 4W, C)
-        x = self.norm(x)  # (4H, 4W, C)
-        B, H, W, C = x.shape
-        x = x.view(B, C, H, W)
+        C = x.shape[3]
+        dim_scale = 4
+        x = rearrange(x, 'b h w (p1 p2 c)-> b (h p1) (w p2) c', p1=dim_scale, p2=dim_scale,
+                      c=C // (dim_scale ** 2))
         return x
 
 
@@ -40,10 +41,12 @@ class SwinUnet(Module):
         C = 96
         # Encoder
         encoder = models.swin_v2_t(weights=Swin_V2_T_Weights.IMAGENET1K_V1)
-        self.encoder_stage1 = Sequential(encoder.features[0:2])
-        self.encoder_stage2 = Sequential(encoder.features[2:4])
-        self.encoder_stage3 = Sequential(encoder.features[4:6])
-        self.bottleneck = Sequential(encoder.features[6:])
+        self.patch_embed = encoder.features[0]
+        self.encoder_stage1 = Sequential(encoder.features[1:3])
+        self.encoder_stage2 = Sequential(encoder.features[3:5])
+        self.encoder_stage3 = Sequential(encoder.features[5:7])
+        self.bottleneck = Sequential(encoder.features[7])
+        self.norm = LayerNorm(8 * C)
 
         # Decoder
         self.decoder_expands = ModuleList()
@@ -56,24 +59,39 @@ class SwinUnet(Module):
             self.decoder_blocks.append(self._build_decoder_block(dim, depth, num_heads))
             num_heads //= 2
             dim //= 2
+        self.norm_up = LayerNorm(C)
 
         # Upsample and head
         self.final_upsample = FinalPatchExpanding(C)
         self.segmentation_head = Conv2d(C, num_classes, 1, bias=False)
 
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, Linear):
+            init.trunc_normal_(m.weight, std=.02)
+            if isinstance(m, Linear) and m.bias is not None:
+                init.constant_(m.bias, 0)
+        elif isinstance(m, LayerNorm):
+            init.constant_(m.bias, 0)
+            init.constant_(m.weight, 1.0)
 
     def forward(self, x):
-        skip1 = self.encoder_stage1(x)  # (H/4, W/4, C)
-        skip2 = self.encoder_stage2(skip1)  # (H/8, W/8, 2C)
-        skip3 = self.encoder_stage3(skip2)  # (H/16, W/16, 4C)
-        x = self.bottleneck(skip3)  # (H/32, W/32, 8C)
+        skip1 = self.patch_embed(x)  # (H/4, W/4, C)
+        skip2 = self.encoder_stage1(skip1)  # (H/8, W/8, 2C)
+        skip3 = self.encoder_stage2(skip2)  # (H/16, W/16, 4C)
+        x = self.encoder_stage3(skip3)  # (H/32, W/32, 8C)
+        x = self.bottleneck(x)  # (H/32, W/32, 8C)
+        x = self.norm(x)
 
         for i, skip_feature in enumerate([skip3, skip2, skip1]):
             x = self.decoder_expands[i](x)  # (Hd, Wd, Cd)
             x = torch.cat([x, skip_feature], dim=3)  # (Hd, Wd, 2Cd)
             x = self.decoder_blocks[i](x)  # (Hd, Wd, Cd)
+        x = self.norm_up(x)
 
         x = self.final_upsample(x)  # (C, H, W)
+        x = x.permute(0, 3, 1, 2)
         x = self.segmentation_head(x)  # (N, H, W)
         return x
 
@@ -89,7 +107,7 @@ class SwinUnet(Module):
 
 
 if __name__ == "__main__":
-    device = torch.device("cuda")
+    device = torch.device("cpu")
     WINDOW_SIZE = 224
     swin_unet = SwinUnet(1).to(device)
     image = torch.rand(4, 3, WINDOW_SIZE, WINDOW_SIZE).to(device)

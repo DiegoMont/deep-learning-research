@@ -1,6 +1,8 @@
 # Model training files
 data/
+lightning_logs/
 *.pth
+*.ckpt
 
 # IDE files
 .env
@@ -10,3 +12,10 @@ debug_script.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
+
+
+# Tensorboard output files
+*.out*
+
+# Image files
+*.png

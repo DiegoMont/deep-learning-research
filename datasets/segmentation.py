@@ -13,10 +13,10 @@ import torchvision.transforms.v2.functional as F
 class BaseSegmentationDataset(Dataset):
     def __init__(self, images_dir: str, labels_dir: str, augmentations: list | None = None):
         super().__init__()
-        self.images_dir: str = path.abspath(images_dir)
-        self.labels_dir: str = path.abspath(labels_dir)
+        self.images_dir: str = path.expanduser(images_dir)
+        self.labels_dir: str = path.expanduser(labels_dir)
         self.sample_filenames: list[str] = self._get_sample_filenames(self.images_dir)
-        self._augmentations: list | None = augmentations
+        self.augmentations: list | None = augmentations
 
     def __len__(self) -> int:
         return len(self.sample_filenames)
@@ -46,8 +46,8 @@ class WaterSegmentationDataset(BaseSegmentationDataset):
     def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
         image = self.__images[index]
         mask = self.__masks[index]
-        if self._augmentations:
-            transform = A.Compose(self._augmentations)
+        if self.augmentations:
+            transform = A.Compose(self.augmentations)
             transformed = transform(image=image, mask=mask)
             image = transformed["image"]
             mask = transformed["mask"]
@@ -83,23 +83,3 @@ class WaterSegmentationDataset(BaseSegmentationDataset):
         hot_encoded_mask = greyscale_mask > 200
         encoded_water_mask = hot_encoded_mask.to(dtype=torch.float32)
         return encoded_water_mask
-
-
-class CrackSeg(BaseSegmentationDataset):
-    def __init__(self, images_dir: str, labels_dir: str):
-        super().__init__(images_dir, labels_dir, None)
-
-    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
-        image_path = path.join(self.images_dir, self.sample_filenames[index])
-        mask_path = path.join(self.labels_dir, self.sample_filenames[index])
-        rgb_img = self._open_as_rgb_image(image_path)
-        image = F.pil_to_tensor(rgb_img).float() / 255
-        rgb_mask = self._open_as_rgb_image(mask_path)
-        mask = F.pil_to_tensor(rgb_mask)
-        mask = self.__encode_cracks(mask).unsqueeze(0)
-        return image, mask
-
-    def __encode_cracks(self, mask) -> Tensor:
-        greyscale_mask = mask.sum(axis=0) / 3
-        hot_encoded_mask = greyscale_mask > 200
-        return hot_encoded_mask.to(dtype=torch.float32)
